@@ -97,11 +97,24 @@ function computeSearchBudget(params, turn) {
     const myTime = (turn === 'w' ? params.wtime : params.btime) || 0;
     const myInc = (turn === 'w' ? params.winc : params.binc) || 0;
     const movesToGo = params.movestogo || 25;
-    let soft = myTime / movesToGo + myInc * 0.8;
-    soft = Math.min(soft, myTime * 0.3);
-    soft = Math.max(soft, 30);
-    let hard = Math.min(soft * 3, myTime * 0.6);
-    hard = Math.max(hard, 40);
+    // Fixed overhead reserve: the in-search deadline check is coarse
+    // (every 1024 nodes, inside chess.html's negamax/quiesce), so it can
+    // overshoot a budget computed purely from remaining time by whatever
+    // per-move fixed cost isn't visible to node counting (UCI I/O, GC, JIT,
+    // engine<->GUI round trip). Without this reserve, budgets erode toward
+    // zero late in a game and that overshoot can exceed what's left on the
+    // clock. Caught via testing: 1 flagged loss in 120 self-play games at a
+    // fast 10+0.1 control before this reserve was added.
+    const OVERHEAD_MS = 30;
+    const usable = Math.max(0, myTime - OVERHEAD_MS);
+    let soft = usable / movesToGo + myInc * 0.8;
+    soft = Math.min(soft, usable * 0.3);
+    soft = Math.max(soft, 20);
+    let hard = Math.min(soft * 3, usable * 0.6);
+    hard = Math.max(hard, 25);
+    // Never plan to use more than what's actually left after the reserve.
+    hard = Math.min(hard, usable);
+    soft = Math.min(soft, hard);
     return { maxDepth: DEFAULT_MAX_DEPTH, searchMs: Math.floor(hard), softMs: Math.floor(soft) };
   }
   if (params.infinite) return { maxDepth: DEFAULT_MAX_DEPTH, searchMs: INFINITE_GO_MS, softMs: INFINITE_GO_MS };
