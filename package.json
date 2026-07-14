@@ -1,0 +1,15 @@
+{
+  "name": "chess-bot-uci",
+  "version": "0.1.0",
+  "private": true,
+  "description": "UCI wrapper around the chess.html browser engine, for standalone strength testing (cutechess-cli gauntlets, CCRL/CEGT submission, etc.)",
+  "main": "uci.js",
+  "bin": {
+    "chess-bot-uci": "./uci.js"
+  },
+  "scripts": {
+    "start": "node uci.js",
+    "test": "node test/smoke.js"
+  },
+  "license": "MIT"
+}
