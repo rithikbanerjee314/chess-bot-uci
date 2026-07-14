@@ -20,15 +20,25 @@ const DEFAULT_GO_MS = 1000;     // bare `go` with no params at all
 const INFINITE_GO_MS = 10 * 60 * 1000; // pragmatic ceiling for `go infinite` — see README
 
 let pos = null; // { board, turn, enPassant, castling }
+// Position hashes of every position reached in the current game (start
+// position + one per move, current position last). Passed to the search so
+// any line returning to one of them is scored as a repetition draw.
+let gameKeys = [];
+
+function keyOfPos() {
+  return engine.positionHash(pos.board, pos.turn, pos.castling, pos.enPassant);
+}
 
 function setStartpos() {
   const p = engine.parseFen(engine.INIT_FEN);
   pos = { board: p.board, turn: p.turn, enPassant: p.enPassant, castling: p.castling };
+  gameKeys = [keyOfPos()];
 }
 
 function setFen(fenTokens) {
   const p = engine.parseFen(fenTokens.join(' '));
   pos = { board: p.board, turn: p.turn, enPassant: p.enPassant, castling: p.castling };
+  gameKeys = [keyOfPos()];
 }
 
 function applyUciMove(moveStr) {
@@ -40,6 +50,7 @@ function applyUciMove(moveStr) {
   if (!match) throw new Error('illegal move in position command: ' + moveStr);
   const { board, newEP, newCastling } = engine.applyMove(pos.board, from, to, promo, pos.enPassant, pos.castling);
   pos = { board, turn: pos.turn === 'w' ? 'b' : 'w', enPassant: newEP, castling: newCastling };
+  gameKeys.push(keyOfPos());
 }
 
 function moveToUci(mv) {
@@ -67,24 +78,34 @@ function handlePosition(tokens) {
   }
 }
 
-// Turns `go` parameters into { maxDepth, searchMs } for engine.computerMove.
-// wtime/btime uses a simple time-management heuristic (remaining/movesToGo +
-// 80% of increment, capped at half the remaining clock) — not tournament-
-// tuned, but safe against flagging. See README for known limitations.
+// Turns `go` parameters into { maxDepth, searchMs, softMs } for
+// engine.computerMove. Soft/hard time split: the soft limit stops iterative
+// deepening from STARTING a new depth (partial iterations get discarded, so
+// time past soft on a fresh iteration is mostly wasted); the hard limit
+// aborts mid-iteration as a safety net. Soft = remaining/25 + 80% of the
+// increment; hard = 3x soft, both capped well below the remaining clock.
 function computeSearchBudget(params, turn) {
-  if (params.depth) return { maxDepth: params.depth, searchMs: 24 * 60 * 60 * 1000 };
-  if (params.movetime) return { maxDepth: DEFAULT_MAX_DEPTH, searchMs: Math.max(50, params.movetime - 20) };
+  if (params.depth) {
+    const cap = 24 * 60 * 60 * 1000;
+    return { maxDepth: params.depth, searchMs: cap, softMs: cap };
+  }
+  if (params.movetime) {
+    const ms = Math.max(50, params.movetime - 20);
+    return { maxDepth: DEFAULT_MAX_DEPTH, searchMs: ms, softMs: ms };
+  }
   if (params.wtime != null || params.btime != null) {
     const myTime = (turn === 'w' ? params.wtime : params.btime) || 0;
     const myInc = (turn === 'w' ? params.winc : params.binc) || 0;
-    const movesToGo = params.movestogo || 30;
-    let allocated = myTime / movesToGo + myInc * 0.8;
-    allocated = Math.min(allocated, myTime * 0.5);
-    allocated = Math.max(allocated, 50);
-    return { maxDepth: DEFAULT_MAX_DEPTH, searchMs: Math.floor(allocated) };
+    const movesToGo = params.movestogo || 25;
+    let soft = myTime / movesToGo + myInc * 0.8;
+    soft = Math.min(soft, myTime * 0.3);
+    soft = Math.max(soft, 30);
+    let hard = Math.min(soft * 3, myTime * 0.6);
+    hard = Math.max(hard, 40);
+    return { maxDepth: DEFAULT_MAX_DEPTH, searchMs: Math.floor(hard), softMs: Math.floor(soft) };
   }
-  if (params.infinite) return { maxDepth: DEFAULT_MAX_DEPTH, searchMs: INFINITE_GO_MS };
-  return { maxDepth: 12, searchMs: DEFAULT_GO_MS };
+  if (params.infinite) return { maxDepth: DEFAULT_MAX_DEPTH, searchMs: INFINITE_GO_MS, softMs: INFINITE_GO_MS };
+  return { maxDepth: 12, searchMs: DEFAULT_GO_MS, softMs: DEFAULT_GO_MS };
 }
 
 function handleGo(tokens) {
@@ -97,10 +118,13 @@ function handleGo(tokens) {
     else if (t === 'ponder') params.ponder = true;
   }
 
-  const { maxDepth, searchMs } = computeSearchBudget(params, pos.turn);
+  const { maxDepth, searchMs, softMs } = computeSearchBudget(params, pos.turn);
   const result = engine.computerMove({
     board: pos.board, turn: pos.turn, enPassant: pos.enPassant, castling: pos.castling,
-    maxDepth, searchMs,
+    maxDepth, searchMs, softMs,
+    // Every position reached in the game (including the current root — any
+    // search line returning to it is a repetition).
+    prevKeys: gameKeys,
   });
 
   if (!result) {

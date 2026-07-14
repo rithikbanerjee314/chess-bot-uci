@@ -103,6 +103,8 @@ const FUNC_NAMES = [
   'evalSpaceMG', 'kingZoneSafety',
   'phase128', 'scaleFactor',
   'pawnStructureMGEG', 'mobilityMGEG', 'evaluateMGEG', 'evaluateBoard',
+  'fastEval', 'evaluateBoardLazy',
+  'leastValuableAttacker', 'seeCapture',
   'positionHash', 'historyIdx',
   'moveOrderScoreEx', 'orderMovesEx',
   'quiesce', 'negamax', 'hasNonPawnMaterial',
@@ -138,6 +140,8 @@ let _searchDeadline = Infinity;
 let _nodeCount = 0;
 let lastSearchScore = 0;
 let lastSearchDepth = 0;
+let _prevKeys = new Set();
+let _pathKeys = [];
 function getSearchStats() { return { score: lastSearchScore, depth: lastSearchDepth, nodes: _nodeCount }; }
 `;
 

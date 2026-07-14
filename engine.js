@@ -119,7 +119,7 @@ const MATE_SCORE = 100000;
 const QMAX = 6;
 const TT_EXACT = 0, TT_LOWER = 1, TT_UPPER = 2;
 const TT_SIZE  = 1 << 18;
-const MAX_PLY = 64;
+const MAX_PLY = 128;
 const _pieceIdx = { P:0, N:1, B:2, R:3, Q:4, K:5, p:6, n:7, b:8, r:9, q:10, k:11 };
 const INIT_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -147,6 +147,8 @@ let _searchDeadline = Infinity;
 let _nodeCount = 0;
 let lastSearchScore = 0;
 let lastSearchDepth = 0;
+let _prevKeys = new Set();
+let _pathKeys = [];
 function getSearchStats() { return { score: lastSearchScore, depth: lastSearchDepth, nodes: _nodeCount }; }
 
 function pieceColor(p) {
@@ -241,13 +243,59 @@ function pseudoMoves(board, from, turn, enPassant, castling) {
 }
 
 function isSquareAttacked(board, sq, byColor) {
-  const tempTurn = byColor;
-  // Check if any piece of byColor attacks sq
-  for (let i=0;i<64;i++) {
-    if (!board[i]||pieceColor(board[i])!==byColor) continue;
-    const moves = pseudoMoves(board, i, byColor, null, '');
-    if (moves.includes(sq)) return true;
+  // Reverse attack detection: instead of generating every move of every
+  // byColor piece (O(pieces × their moves)), scan outward from `sq` itself —
+  // pawn/knight/king attack squares are fixed offsets, and slider attacks are
+  // 8 rays that stop at the first occupied square. Roughly an order of
+  // magnitude faster; this is the hottest function in the search (check
+  // detection + per-move legality filtering).
+  const rank = Math.floor(sq/8), file = sq%8;
+
+  // Pawns: a byColor pawn attacks sq diagonally from one rank "behind" it.
+  const pr = rank + (byColor === 'w' ? -1 : 1);
+  if (pr >= 0 && pr < 8) {
+    const pw = byColor === 'w' ? 'P' : 'p';
+    if (file > 0 && board[pr*8+file-1] === pw) return true;
+    if (file < 7 && board[pr*8+file+1] === pw) return true;
   }
+
+  // Knights
+  const kn = byColor === 'w' ? 'N' : 'n';
+  for (const [dr,df] of [[2,1],[2,-1],[-2,1],[-2,-1],[1,2],[1,-2],[-1,2],[-1,-2]]) {
+    const r = rank+dr, f = file+df;
+    if (r>=0&&r<8&&f>=0&&f<8 && board[r*8+f] === kn) return true;
+  }
+
+  // King (adjacent squares)
+  const kg = byColor === 'w' ? 'K' : 'k';
+  for (const [dr,df] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]) {
+    const r = rank+dr, f = file+df;
+    if (r>=0&&r<8&&f>=0&&f<8 && board[r*8+f] === kg) return true;
+  }
+
+  // Orthogonal sliders (rook/queen)
+  const rk = byColor === 'w' ? 'R' : 'r';
+  const qn = byColor === 'w' ? 'Q' : 'q';
+  for (const [dr,df] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+    let r = rank+dr, f = file+df;
+    while (r>=0&&r<8&&f>=0&&f<8) {
+      const p = board[r*8+f];
+      if (p) { if (p === rk || p === qn) return true; break; }
+      r+=dr; f+=df;
+    }
+  }
+
+  // Diagonal sliders (bishop/queen)
+  const bp = byColor === 'w' ? 'B' : 'b';
+  for (const [dr,df] of [[1,1],[1,-1],[-1,1],[-1,-1]]) {
+    let r = rank+dr, f = file+df;
+    while (r>=0&&r<8&&f>=0&&f<8) {
+      const p = board[r*8+f];
+      if (p) { if (p === bp || p === qn) return true; break; }
+      r+=dr; f+=df;
+    }
+  }
+
   return false;
 }
 
@@ -752,6 +800,104 @@ function evaluateBoard(board, turn) {
   return v;
 }
 
+function fastEval(board, turn) {
+  let mg = 0, eg = 0;
+  for (let i = 0; i < 64; i++) {
+    const p = board[i]; if (!p) continue;
+    const t = pieceType(p);
+    const white = pieceColor(p) === 'w';
+    const sgn = white ? 1 : -1;
+    mg += sgn * (PV_MG[t] + getPST(t, white, i, MAX_PHASE));
+    eg += sgn * (PV_EG[t] + getPST(t, white, i, 0));
+  }
+  const p128 = phase128(board);
+  let v = Math.trunc((mg * p128 + eg * (128 - p128)) / 128);
+  if (turn) v += turn === 'w' ? TEMPO_BONUS : -TEMPO_BONUS;
+  return v;
+}
+
+function evaluateBoardLazy(board, turn, alpha, beta) {
+  const LAZY_MARGIN = 380;
+  const fastW = fastEval(board, turn);
+  const fast = turn === 'w' ? fastW : -fastW;
+  if (fast + LAZY_MARGIN <= alpha || fast - LAZY_MARGIN >= beta) return fast;
+  const full = evaluateBoard(board, turn);
+  return turn === 'w' ? full : -full;
+}
+
+function leastValuableAttacker(board, sq, byColor) {
+  const rank = Math.floor(sq/8), file = sq%8;
+  const pr = rank + (byColor === 'w' ? -1 : 1);
+  if (pr >= 0 && pr < 8) {
+    const pw = byColor === 'w' ? 'P' : 'p';
+    if (file > 0 && board[pr*8+file-1] === pw) return pr*8+file-1;
+    if (file < 7 && board[pr*8+file+1] === pw) return pr*8+file+1;
+  }
+  const kn = byColor === 'w' ? 'N' : 'n';
+  for (const [dr,df] of [[2,1],[2,-1],[-2,1],[-2,-1],[1,2],[1,-2],[-1,2],[-1,-2]]) {
+    const r = rank+dr, f = file+df;
+    if (r>=0&&r<8&&f>=0&&f<8 && board[r*8+f] === kn) return r*8+f;
+  }
+  const bp = byColor === 'w' ? 'B' : 'b';
+  const rk = byColor === 'w' ? 'R' : 'r';
+  const qn = byColor === 'w' ? 'Q' : 'q';
+  let queenSq = -1;
+  for (const [dr,df] of [[1,1],[1,-1],[-1,1],[-1,-1]]) {
+    let r = rank+dr, f = file+df;
+    while (r>=0&&r<8&&f>=0&&f<8) {
+      const p = board[r*8+f];
+      if (p) {
+        if (p === bp) return r*8+f;
+        if (p === qn && queenSq < 0) queenSq = r*8+f;
+        break;
+      }
+      r+=dr; f+=df;
+    }
+  }
+  for (const [dr,df] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+    let r = rank+dr, f = file+df;
+    while (r>=0&&r<8&&f>=0&&f<8) {
+      const p = board[r*8+f];
+      if (p) {
+        if (p === rk) return r*8+f;
+        if (p === qn && queenSq < 0) queenSq = r*8+f;
+        break;
+      }
+      r+=dr; f+=df;
+    }
+  }
+  if (queenSq >= 0) return queenSq;
+  const kg = byColor === 'w' ? 'K' : 'k';
+  for (const [dr,df] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]) {
+    const r = rank+dr, f = file+df;
+    if (r>=0&&r<8&&f>=0&&f<8 && board[r*8+f] === kg) return r*8+f;
+  }
+  return -1;
+}
+
+function seeCapture(board, from, to, ep) {
+  const b = board.slice();
+  let side = pieceColor(b[from]);
+  const isEP = pieceType(b[from]) === 'p' && ep !== null && to === ep && !b[to];
+  if (isEP) { const dir = side === 'w' ? 1 : -1; b[to - dir*8] = null; }
+  const gains = [isEP ? PIECE_VALUES.p : (b[to] ? PIECE_VALUES[pieceType(b[to])] : 0)];
+  let occupantVal = PIECE_VALUES[pieceType(b[from])];
+  b[to] = b[from]; b[from] = null;
+  side = side === 'w' ? 'b' : 'w';
+  let d = 0;
+  while (true) {
+    const sq = leastValuableAttacker(b, to, side);
+    if (sq < 0) break;
+    d++;
+    gains[d] = occupantVal - gains[d-1];
+    occupantVal = PIECE_VALUES[pieceType(b[sq])];
+    b[to] = b[sq]; b[sq] = null;
+    side = side === 'w' ? 'b' : 'w';
+  }
+  while (d > 0) { gains[d-1] = -Math.max(-gains[d-1], gains[d]); d--; }
+  return gains[0];
+}
+
 function positionHash(board, turn, castling, ep) {
   let h = 0x811c9dc5 | 0; // FNV offset basis
   for (let i = 0; i < 64; i++) {
@@ -806,12 +952,30 @@ function orderMovesEx(board, moves, ep, ttMove, ply) {
               .map(x => x[0]);
 }
 
-function quiesce(board, turn, ep, castling, alpha, beta, qdepth) {
+function quiesce(board, turn, ep, castling, alpha, beta, qdepth, ply) {
   if ((++_nodeCount & 1023) === 0 && Date.now() > _searchDeadline) throw 'timeout';
 
-  // White-POV eval → side-to-move POV
-  const ev = evaluateBoard(board, turn);
-  const standPat = turn === 'w' ? ev : -ev;
+  const inCheck = isInCheck(board, turn);
+
+  if (inCheck) {
+    if (qdepth <= -3) {
+      const ev = evaluateBoard(board, turn);
+      return turn === 'w' ? ev : -ev;
+    }
+    const evasions = legalMoves(board, turn, ep, castling);
+    if (evasions.length === 0) return -(MATE_SCORE - ply);
+    let best = -Infinity;
+    for (const mv of orderMovesEx(board, evasions, ep, null, 0)) {
+      const { board: nb, newEP, newCastling } = applyMove(board, mv.from, mv.to, mv.promo, ep, castling);
+      const score = -quiesce(nb, turn==='w'?'b':'w', newEP, newCastling||'', -beta, -alpha, qdepth-1, ply+1);
+      if (score > best) best = score;
+      if (best >= beta) return best;
+      if (best > alpha) alpha = best;
+    }
+    return best;
+  }
+
+  const standPat = evaluateBoardLazy(board, turn, alpha, beta);
   if (standPat >= beta) return standPat;
 
   let best = standPat;
@@ -836,8 +1000,12 @@ function quiesce(board, turn, ep, castling, alpha, beta, qdepth) {
                  (mv.promo ? PIECE_VALUES[mv.promo] - PIECE_VALUES.p : 0);
     if (standPat + gain + DELTA_MARGIN < alpha) continue;
 
+    // SEE pruning: skip captures that lose material outright (the swap-off
+    // at the target square ends negative). Promotions are always searched.
+    if (!mv.promo && seeCapture(board, mv.from, mv.to, ep) < 0) continue;
+
     const { board: nb, newEP, newCastling } = applyMove(board, mv.from, mv.to, mv.promo, ep, castling);
-    const score = -quiesce(nb, turn==='w'?'b':'w', newEP, newCastling||'', -beta, -alpha, qdepth-1);
+    const score = -quiesce(nb, turn==='w'?'b':'w', newEP, newCastling||'', -beta, -alpha, qdepth-1, ply+1);
     if (score > best) best = score;
     if (best >= beta) return best;
     if (best > alpha) alpha = best;
@@ -847,6 +1015,17 @@ function quiesce(board, turn, ep, castling, alpha, beta, qdepth) {
 
 function negamax(board, turn, ep, castling, depth, alpha, beta, ply, allowNull) {
   if ((++_nodeCount & 1023) === 0 && Date.now() > _searchDeadline) throw 'timeout';
+
+  // ---- Draw by repetition ----
+  // A position already on the current search path or in the played game
+  // history scores 0 immediately. Checked before the TT probe so a cached
+  // score can't mask a repetition; the path stack is unwound via finally so
+  // even the timeout throw leaves it consistent.
+  const hash = positionHash(board, turn, castling, ep);
+  if (ply > 0 && (_prevKeys.has(hash) || _pathKeys.indexOf(hash) !== -1)) return 0;
+
+  _pathKeys.push(hash);
+  try {
 
   const inCheck = isInCheck(board, turn);
 
@@ -860,10 +1039,9 @@ function negamax(board, turn, ep, castling, depth, alpha, beta, ply, allowNull) 
   if (alphaMD >= betaMD) return alphaMD;
   alpha = alphaMD; beta = betaMD;
 
-  if (depth <= 0) return quiesce(board, turn, ep, castling, alpha, beta, QMAX);
+  if (depth <= 0) return quiesce(board, turn, ep, castling, alpha, beta, QMAX, ply);
 
   // ---- Transposition-table probe ----
-  const hash = positionHash(board, turn, castling, ep);
   const tt   = ttProbe(hash);
   let ttMove = tt ? tt.move : null;
   if (tt && tt.depth >= depth) {
@@ -877,27 +1055,26 @@ function negamax(board, turn, ep, castling, depth, alpha, beta, ply, allowNull) 
   if (moves.length === 0)
     return inCheck ? -(MATE_SCORE - ply) : 0; // checkmate at this ply / stalemate
 
-  // ---- Compute static eval once for RFP + futility pruning (depth 1–4 only) ----
-  // Gated on !inCheck so we don't prune out-of-check nodes incorrectly.
-  let rfpStaticEval = null;
-  if (!inCheck && depth <= 4) {
-    const _ev = evaluateBoard(board, turn);
-    rfpStaticEval = turn === 'w' ? _ev : -_ev;
-  }
+  // ---- Static eval (lazy), shared by RFP, futility pruning, and the
+  // null-move guard. Gated on !inCheck so we never prune while in check.
+  let staticEval = null;
+  if (!inCheck) staticEval = evaluateBoardLazy(board, turn, alpha, beta);
 
   // ---- Reverse Futility Pruning (static null move) ----
   // If our static eval is already well above beta by a depth-scaled margin,
   // this node will almost certainly fail high — prune it immediately.
   // Avoids wasting nodes on clearly-winning positions at shallow depth.
-  if (rfpStaticEval !== null && Math.abs(beta) < MATE_SCORE - 100) {
-    if (rfpStaticEval - 120 * depth >= beta) return rfpStaticEval;
+  if (staticEval !== null && depth <= 4 && Math.abs(beta) < MATE_SCORE - 100) {
+    if (staticEval - 120 * depth >= beta) return staticEval;
   }
 
   // ---- Null-move pruning ----
   // Skip our turn; if a 2-ply-shallower search still fails high, the actual
-  // position would have too.  Disabled in check, near leaves, and when our
-  // side has only king+pawns (zugzwang risk).
-  if (allowNull && !inCheck && depth >= 3 && hasNonPawnMaterial(board, turn)) {
+  // position would have too.  Disabled in check, near leaves, when our side
+  // has only king+pawns (zugzwang risk), and when the static eval is already
+  // below beta (the null search would almost never fail high — skip the cost).
+  if (allowNull && !inCheck && depth >= 3 && staticEval !== null && staticEval >= beta &&
+      hasNonPawnMaterial(board, turn)) {
     const R = depth >= 6 ? 3 : 2; // reduction
     const score = -negamax(board, turn==='w'?'b':'w', null, castling, depth - 1 - R,
                            -beta, -beta + 1, ply + 1, false);
@@ -914,8 +1091,8 @@ function negamax(board, turn, ep, castling, depth, alpha, beta, ply, allowNull) 
 
   // Reuse static eval (computed above) for futility pruning at depth 1–2.
   // fpEval is -Infinity when not applicable (not in check is already required
-  // by rfpStaticEval being non-null).
-  const fpEval = (depth <= 2 && rfpStaticEval !== null) ? rfpStaticEval : -Infinity;
+  // by staticEval being non-null).
+  const fpEval = (depth <= 2 && staticEval !== null) ? staticEval : -Infinity;
 
   for (const mv of ordered) {
     const isCapture = board[mv.to] !== null ||
@@ -961,9 +1138,11 @@ function negamax(board, turn, ep, castling, depth, alpha, beta, ply, allowNull) 
       // Save killer + bump history for quiet beta-cutoff moves.
       if (isQuiet) {
         const kil = _killers[ply];
-        if (!kil[0] || kil[0].from !== mv.from || kil[0].to !== mv.to) {
-          kil[1] = kil[0];
-          kil[0] = mv;
+        if (kil) {
+          if (!kil[0] || kil[0].from !== mv.from || kil[0].to !== mv.to) {
+            kil[1] = kil[0];
+            kil[0] = mv;
+          }
         }
         const pc = board[mv.from];
         if (pc) _history[historyIdx(pc, mv.to)] += depth * depth;
@@ -975,6 +1154,10 @@ function negamax(board, turn, ep, castling, depth, alpha, beta, ply, allowNull) 
 
   ttStore(hash, depth, best, bound, bestMove);
   return best;
+
+  } finally {
+    _pathKeys.pop();
+  }
 }
 
 function hasNonPawnMaterial(board, turn) {
@@ -1001,13 +1184,24 @@ function computerMove(gameState) {
 
   // Depth and time limits can be overridden per-request (difficulty system).
   // Defaults keep the original Hard behaviour when no override is supplied.
+  // softMs (optional) stops iterative deepening from STARTING a new iteration
+  // past that point — partial iterations get discarded anyway, so time spent
+  // beyond the soft limit on a fresh depth is usually wasted. The hard
+  // deadline (searchMs) still aborts mid-iteration as before.
   const MAX_DEPTH  = gameState.maxDepth !== undefined ? gameState.maxDepth  : 10;
   const TIME_LIMIT = gameState.searchMs !== undefined ? gameState.searchMs  : 2200;
+  const softDeadline = Date.now() + (gameState.softMs !== undefined ? gameState.softMs : TIME_LIMIT);
 
   _searchDeadline = Date.now() + TIME_LIMIT;
   _nodeCount = 0;
-  ttClear();
-  clearHistory();
+  // The TT persists across moves of the same game (cleared on new game /
+  // worker restart) — entries from previous searches seed move ordering and
+  // cutoffs for the current one. Killers are ply-relative so they reset;
+  // history decays instead of vanishing.
+  _killers = Array.from({ length: MAX_PLY }, () => [null, null]);
+  for (let i = 0; i < _history.length; i++) _history[i] >>= 1;
+  _prevKeys = new Set(gameState.prevKeys || []);
+  _pathKeys = [];
 
   let bestMove = orderMovesEx(board, moves, enPassant, null, 0)[0];
   let bestScoreSTM = -Infinity; // side-to-move POV; converted at end
@@ -1075,7 +1269,7 @@ function computerMove(gameState) {
       if (idx > 0) { moves.splice(idx, 1); moves.unshift(iterBest); }
     }
 
-    if (timedOut || Date.now() > _searchDeadline) break;
+    if (timedOut || Date.now() > softDeadline) break;
   }
 
   // Convert side-to-move score → white's POV for the eval bar.
@@ -1094,6 +1288,8 @@ function searchEval(board, turn, ep, castling) {
   _nodeCount = 0;
   ttClear();
   clearHistory();
+  _prevKeys = new Set();
+  _pathKeys = [];
 
   let bestSTM = 0;
   try {
