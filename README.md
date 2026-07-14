@@ -41,10 +41,30 @@ The most direct way to get a real Elo estimate: play a gauntlet against
 opponents of known strength and compute the result with a proper rating
 tool.
 
-1. Install [cutechess-cli](https://github.com/cutechess/cutechess) and a
-   reference opponent (e.g. [Stockfish](https://stockfishchess.org/)).
-2. Run a gauntlet, e.g. against Stockfish limited to a few different
-   strengths:
+1. Install [cutechess-cli](https://github.com/cutechess/cutechess) and
+   [Stockfish](https://stockfishchess.org/). On Windows, both are on winget:
+   `winget install Stockfish.Stockfish` and `winget install CuteChess.CuteChess`
+   (the latter bundles `cutechess-cli.exe` alongside the GUI).
+2. Run `gauntlet/run-gauntlet.sh`. It pits `uci.js` against Stockfish at
+   several `UCI_LimitStrength` levels (1500/1800/2100/2400 by default) using
+   a 16-line opening book (`gauntlet/openings.pgn`) so games aren't
+   repetitive, and writes a timestamped PGN to `gauntlet/results/`:
+
+   ```
+   STOCKFISH_CMD=/path/to/stockfish CUTECHESS_CMD=/path/to/cutechess-cli \
+     ./gauntlet/run-gauntlet.sh
+   ```
+
+   Tune it via env vars: `TC` (time control, default `10+0.1`), `ROUNDS`
+   (per opponent, default 20 — each round is 2 games with colors swapped),
+   `CONCURRENCY` (default 4), `ELOS` (space-separated Stockfish levels).
+3. Feed the resulting PGN into [`ordo`](https://github.com/michiguel/Ordo)
+   or `bayeselo` to get an Elo estimate with a confidence interval, anchored
+   to the `SF-<elo>` opponents' known ratings. A few hundred games against a
+   spread of opponents (raise `ROUNDS` and/or `ELOS`) gives a much more
+   reliable number than any single match.
+
+Equivalently, without the script — this is what it runs under the hood:
 
    ```
    cutechess-cli \
