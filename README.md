@@ -58,11 +58,24 @@ tool.
    Tune it via env vars: `TC` (time control, default `10+0.1`), `ROUNDS`
    (per opponent, default 20 — each round is 2 games with colors swapped),
    `CONCURRENCY` (default 4), `ELOS` (space-separated Stockfish levels).
-3. Feed the resulting PGN into [`ordo`](https://github.com/michiguel/Ordo)
-   or `bayeselo` to get an Elo estimate with a confidence interval, anchored
-   to the `SF-<elo>` opponents' known ratings. A few hundred games against a
-   spread of opponents (raise `ROUNDS` and/or `ELOS`) gives a much more
-   reliable number than any single match.
+3. Get an anchored Elo estimate from the PGN. If you have
+   [`ordo`](https://github.com/michiguel/Ordo) or `bayeselo` built/installed,
+   use those. Otherwise, `gauntlet/compute-elo.js` does the same thing with
+   zero dependencies — a maximum-likelihood logistic fit of a single unknown
+   rating (your engine) against the fixed, known ratings of the `SF-<elo>`
+   opponents, with a 95% confidence interval:
+
+   ```
+   node gauntlet/compute-elo.js gauntlet/results/<file>.pgn ChessBotUCI \
+     SF-1500=1500 SF-1800=1800 SF-2100=2100 SF-2400=2400
+   ```
+
+   This is the same underlying model Elo/ordo/bayeselo all use (logistic
+   win-probability regression) — it just skips ordo's Bayesian smoothing
+   prior, which mainly matters when some pairings have very few games. A few
+   hundred games against a spread of opponents (raise `ROUNDS` and/or
+   `ELOS`) narrows the confidence interval a lot more than any single match
+   would.
 
 Equivalently, without the script — this is what it runs under the hood:
 
