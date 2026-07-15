@@ -5,6 +5,7 @@
 #include "eval.hpp"
 #include <atomic>
 #include <algorithm>
+#include <cstddef>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -17,6 +18,9 @@ const char* ENGINE_NAME = "Atlas 1.0.0";
 const char* ENGINE_AUTHOR = "Rithik Banerjee";
 constexpr int DEFAULT_MAX_DEPTH = 60; // headroom under search's MAX_PLY=128
 constexpr long long INFINITE_GO_MS = 10 * 60 * 1000;
+constexpr int DEFAULT_HASH_MB = 256;
+constexpr int MIN_HASH_MB = 1;
+constexpr int MAX_HASH_MB = 4096;
 
 Position g_pos;
 std::vector<std::uint64_t> g_gameKeys;
@@ -198,6 +202,32 @@ void handleGo(std::istringstream& iss) {
   g_searchThread = std::thread(searchThreadFunc, gp);
 }
 
+// Only "Hash" is implemented (name/value tokens, case-sensitive match per
+// UCI convention). Unknown option names are accepted and silently ignored,
+// per the UCI spec.
+void handleSetOption(std::istringstream& iss) {
+  std::string tok, name, value;
+  iss >> tok; // "name"
+  while (iss >> tok && tok != "value") {
+    if (!name.empty()) name += ' ';
+    name += tok;
+  }
+  while (iss >> tok) {
+    if (!value.empty()) value += ' ';
+    value += tok;
+  }
+  if (name == "Hash") {
+    try {
+      int mb = std::stoi(value);
+      mb = std::max(MIN_HASH_MB, std::min(MAX_HASH_MB, mb));
+      stopAndJoinIfRunning();
+      search::setHashSizeMB(static_cast<std::size_t>(mb));
+    } catch (...) {
+      // malformed value — ignore, per UCI convention
+    }
+  }
+}
+
 } // namespace
 
 void runUciLoop() {
@@ -211,6 +241,8 @@ void runUciLoop() {
     if (cmd == "uci") {
       send(std::string("id name ") + ENGINE_NAME);
       send(std::string("id author ") + ENGINE_AUTHOR);
+      send("option name Hash type spin default " + std::to_string(DEFAULT_HASH_MB) +
+           " min " + std::to_string(MIN_HASH_MB) + " max " + std::to_string(MAX_HASH_MB));
       send("uciok");
     } else if (cmd == "isready") {
       send("readyok");
@@ -227,8 +259,10 @@ void runUciLoop() {
     } else if (cmd == "quit") {
       stopAndJoinIfRunning();
       break;
-    } else if (cmd == "setoption" || cmd == "debug" || cmd == "ponderhit") {
-      // no tunable options yet — accepted and ignored
+    } else if (cmd == "setoption") {
+      handleSetOption(iss);
+    } else if (cmd == "debug" || cmd == "ponderhit") {
+      // accepted and ignored
     }
     // unknown commands ignored, per UCI convention
   }

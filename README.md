@@ -168,6 +168,9 @@ learning, open source, etc.), and it can take a while to get a result.
   PEXT. A valid future micro-optimization, not required to hit 2500 per the
   `tuna` reference point.
 - **Single-threaded search.** Lazy SMP (multi-threaded search sharing a TT)
-  is a standard further Elo lever not yet implemented.
-- **No configurable UCI options.** `setoption` is accepted but ignored —
-  hash size is fixed at 64MB; no `Threads`/`UCI_Elo` limiting, etc.
+  is a standard further Elo lever not yet implemented. `Threads` isn't
+  exposed as a UCI option since there's currently nothing for it to control.
+- **Only `Hash` is configurable.** `option name Hash type spin default 256
+  min 1 max 4096` — `setoption name Hash value <MB>` resizes the
+  transposition table. Other `setoption` calls (`UCI_Elo` limiting, etc.)
+  are accepted but ignored.

@@ -29,7 +29,7 @@ constexpr int MAX_PLY = 128;
 
 struct TimeoutException {};
 
-TranspositionTable g_tt(64);
+TranspositionTable g_tt(256); // CCRL's suggested default
 Move g_killers[MAX_PLY][2];
 int g_history[12][64];
 
