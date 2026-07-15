@@ -1,28 +1,63 @@
 # chess-bot-uci
 
-A [UCI](https://en.wikipedia.org/wiki/Universal_Chess_Interface)-speaking
-command-line engine, so the search/eval from
-[chess.html](https://github.com/rithikbanerjee314/chess) can be tested with
-standard chess-engine tooling (`cutechess-cli`, Arena, CCRL/CEGT submission,
-a Lichess bot bridge, etc.) instead of only being playable inside that
-project's browser UI.
+A standalone [UCI](https://en.wikipedia.org/wiki/Universal_Chess_Interface)
+chess engine in C++20 — bitboards, magic-bitboard sliding move generation,
+make/unmake with incremental Zobrist hashing, and a negamax search with the
+usual modern pruning stack (TT, null-move pruning, LMR, PVS, aspiration
+windows, quiescence with SEE, killer/history move ordering).
 
-`engine.js` is a byte-for-byte port of chess.html's pure search/eval
-functions — pulled out by name via `scripts/sync-engine.js`, the same
-technique chess.html's own `_makeEngineWorker()` uses to build its Web
-Worker source. `uci.js` is a thin protocol adapter on top: it translates UCI
-text commands on stdin into calls to `engine.computerMove()` and writes UCI
-replies to stdout. No other logic is duplicated or reimplemented.
+This project started as a UCI wrapper around
+[chess.html](https://github.com/rithikbanerjee314/chess)'s browser-based
+JS engine, ported over for standalone strength testing. It's since been
+rewritten from scratch in C++ and decoupled entirely — no ongoing sync with
+that project, free to diverge and improve on its own.
 
-## Requirements
+## Current strength
 
-Plain Node.js (14+). No npm dependencies — `engine.js` and `uci.js` are
-vanilla JS.
+**~2468 ± 85 Elo (95% CI)**, anchored against Stockfish at
+2200/2500/2800/3100 `UCI_Elo`, 120 games at 30+0.3, computed with
+`gauntlet/compute-elo.js`. Two independent measurements confirm the C++
+rewrite over the prior JS version (which was itself ~2130 ± 88):
+
+- **Anchored strength**: 2130 → 2468, a ~340 Elo jump.
+- **Head-to-head self-play** (120 games, JS engine preserved for this one
+  comparison): C++ engine scored **116-3-1 (97.1%)**, Elo difference
+  +609 ± 486, LOS 100%.
+
+## Why C++
+
+A hobby engine can reach 2500+ Elo without a neural (NNUE) evaluation —
+[`tuna`](https://github.com/billchow98/chess), a comparable bitboard C++
+engine with a classical eval, hits 2505.9 in SPRT-validated play. What it
+takes is raw search depth, and depth compounds directly with speed:
+doubling nodes-per-second is worth roughly one more ply, worth roughly
+50-70 Elo. The JS version's architecture had several compounding
+inefficiencies for that specific goal — a naive array board copied in full
+on every search node, no bitboards, a position hash recomputed from scratch
+every node instead of incrementally maintained. This rewrite fixes all of
+that at once: `Position::makeMove`/`unmakeMove` mutate in place (no copies),
+magic bitboards answer "what does this rook attack" in O(1), and the
+Zobrist hash is XOR'd incrementally.
+
+## Build
+
+Requires a C++20 compiler and CMake. No other dependencies.
+
+```
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+```
+
+Produces `build/bin/chessbot` (the UCI engine) and `build/bin/perft` (the
+move-generation correctness harness).
+
+On Windows with MSVC, run both commands from a Developer Command Prompt (or
+`vcvarsall.bat x64` first) so `cl`/`cmake` are on `PATH`.
 
 ## Manual test
 
 ```
-node uci.js
+./build/bin/chessbot
 uci
 isready
 position startpos
@@ -33,7 +68,25 @@ quit
 You should see `id name ...` / `uciok`, `readyok`, then an `info ...` /
 `bestmove ...` line about a second after `go`.
 
-Run the automated smoke test with `npm test`.
+## Correctness: perft
+
+`build/bin/perft` runs known-node-count checks (startpos, Kiwipete, CPW
+position 4) — the standard, rigorous way to validate bitboard move
+generation, since move-gen bugs are the most common and most silently
+corrupting bug class in a chess engine. All pass exactly, including a
+depth-6 startpos check (119,060,324 nodes).
+
+## UCI protocol smoke test
+
+```
+node test/uci_smoke.js [path-to-exe]
+```
+
+Spawns the engine as a real child process and drives it through a UCI
+handshake plus two `go` searches (fixed-depth and `movetime`), keeping
+stdin open between commands — closing it immediately after `go` triggers
+the engine's own EOF-cleanup `stop`, which would cut a real search short
+and isn't representative of how a GUI actually behaves.
 
 ## Rating your engine locally with cutechess-cli
 
@@ -45,19 +98,20 @@ tool.
    [Stockfish](https://stockfishchess.org/). On Windows, both are on winget:
    `winget install Stockfish.Stockfish` and `winget install CuteChess.CuteChess`
    (the latter bundles `cutechess-cli.exe` alongside the GUI).
-2. Run `gauntlet/run-gauntlet.sh`. It pits `uci.js` against Stockfish at
-   several `UCI_LimitStrength` levels (1500/1800/2100/2400 by default) using
-   a 16-line opening book (`gauntlet/openings.pgn`) so games aren't
-   repetitive, and writes a timestamped PGN to `gauntlet/results/`:
+2. Run `gauntlet/run-gauntlet.sh`. It pits the compiled engine against
+   Stockfish at several `UCI_LimitStrength` levels using a 16-line opening
+   book (`gauntlet/openings.pgn`) so games aren't repetitive, and writes a
+   timestamped PGN to `gauntlet/results/`:
 
    ```
    STOCKFISH_CMD=/path/to/stockfish CUTECHESS_CMD=/path/to/cutechess-cli \
-     ./gauntlet/run-gauntlet.sh
+     ENGINE_CMD=./build/bin/chessbot ./gauntlet/run-gauntlet.sh
    ```
 
-   Tune it via env vars: `TC` (time control, default `10+0.1`), `ROUNDS`
-   (per opponent, default 20 — each round is 2 games with colors swapped),
-   `CONCURRENCY` (default 4), `ELOS` (space-separated Stockfish levels).
+   Tune it via env vars: `TC` (time control), `ROUNDS` (per opponent, each
+   round is 2 games with colors swapped), `CONCURRENCY`, `ELOS`
+   (space-separated Stockfish levels — raise these as the engine gets
+   stronger so the anchors still bracket its real strength).
 3. Get an anchored Elo estimate from the PGN. If you have
    [`ordo`](https://github.com/michiguel/Ordo) or `bayeselo` built/installed,
    use those. Otherwise, `gauntlet/compute-elo.js` does the same thing with
@@ -66,84 +120,54 @@ tool.
    opponents, with a 95% confidence interval:
 
    ```
-   node gauntlet/compute-elo.js gauntlet/results/<file>.pgn ChessBotUCI \
-     SF-1500=1500 SF-1800=1800 SF-2100=2100 SF-2400=2400
+   node gauntlet/compute-elo.js gauntlet/results/<file>.pgn CppEngine \
+     SF-2200=2200 SF-2500=2500 SF-2800=2800 SF-3100=3100
    ```
 
    Add `--exclude-time-forfeits` to drop games ended by `[Termination "time
-   forfeit"]` from the fit. If the test machine was under load during the
-   run (other concurrent engine processes, etc.), a flag on move 6 out of
-   an opening book is a giveaway that a game was lost to scheduling
-   contention rather than chess — worth checking for and excluding before
-   trusting the number. In practice the effect is usually small (one run:
-   2160±84 raw vs 2130±88 excluding 8/120 forfeited games) but it costs
-   nothing to check.
-
-   This is the same underlying model Elo/ordo/bayeselo all use (logistic
-   win-probability regression) — it just skips ordo's Bayesian smoothing
-   prior, which mainly matters when some pairings have very few games. A few
-   hundred games against a spread of opponents (raise `ROUNDS` and/or
-   `ELOS`) narrows the confidence interval a lot more than any single match
-   would.
-
-Equivalently, without the script — this is what it runs under the hood:
-
-   ```
-   cutechess-cli \
-     -engine cmd=node arg="/path/to/chess-bot-uci/uci.js" name=ChessBotUCI \
-     -engine cmd=stockfish option.UCI_LimitStrength=true option.UCI_Elo=1500 name=SF-1500 \
-     -engine cmd=stockfish option.UCI_LimitStrength=true option.UCI_Elo=1800 name=SF-1800 \
-     -each proto=uci tc=40/60+0.6 \
-     -rounds 200 -repeat -concurrency 4 -pgnout games.pgn
-   ```
-
-3. Feed the results into [`ordo`](https://github.com/michiguel/Ordo) or
-   `bayeselo` to get an Elo estimate with a confidence interval, anchored to
-   your reference engines' known ratings. A few hundred games against a
-   spread of opponents gives a much more reliable number than any single
-   match.
+   forfeit"]` from the fit — a flag on move 6 out of an opening book is a
+   giveaway that a game was lost to test-machine scheduling contention
+   rather than chess, and including it as a normal loss would bias the
+   estimate. Costs nothing to check even when the effect turns out small.
 
 ## Submitting to CCRL / CEGT
 
 These are the widely-cited "official" rating lists. They run your engine
 themselves on standardized hardware against their existing pool, so no local
-setup is needed beyond having a working UCI binary (this one) — but there
-are submission queues, eligibility rules (deterministic play, no online
-learning, open source, etc.), and it can take a while to get a result. See
-each site's submission instructions:
+setup is needed beyond having a working UCI binary — but there are
+submission queues and eligibility rules (deterministic play, no online
+learning, open source, etc.), and it can take a while to get a result.
 
 - [CCRL](https://computerchess.org.uk/ccrl/)
 - [CEGT](http://www.cegt.net/)
 
-## Known limitations
+## Architecture
 
-- **`stop` is accepted but not preemptive.** The search
-  (`engine.computerMove`) runs synchronously on Node's single thread, so a
-  `stop` command sent mid-search can't interrupt it the way a threaded
-  engine would — Node can't process stdin again until the current call
-  returns. In practice this doesn't matter for gauntlet/tournament play:
-  every `go` is already called with a bounded time or depth budget (derived
-  from `movetime`/`wtime`+`btime`/`depth`) that the search self-enforces via
-  its own internal deadline check. It only matters for `go infinite`
-  analysis workflows, which aren't the target use case here.
-- **No pondering.** `ponder` / `ponderhit` are accepted but ignored.
-- **No configurable options.** `setoption` is accepted but ignored — there's
-  currently nothing to tune (hash size, threads, etc. are fixed constants
-  ported from chess.html).
-- **Time management is a simple heuristic**, not tournament-tuned: for
-  `wtime`/`btime`, it allocates `remaining / movesToGo + 80% of increment`,
-  capped at half the remaining clock. Safe against flagging, but not
-  optimized for maximum strength under a clock.
+| File | Responsibility |
+|---|---|
+| `src/bitboard.hpp/.cpp` | `uint64_t` board type, popcount/bitscan helpers |
+| `src/magic.hpp/.cpp` | Knight/king/pawn attack tables; magic-bitboard rook/bishop/queen sliding attacks (magic numbers found via randomized search at startup) |
+| `src/position.hpp/.cpp` | `Position` (12 piece bitboards + mailbox mirror), `makeMove`/`unmakeMove` with an undo stack, incremental Zobrist hashing, FEN parsing |
+| `src/movegen.hpp/.cpp` | Pseudo-legal and fully-legal move generation (legality via make/unmake + check test, no board copies) |
+| `src/eval.hpp/.cpp` | Tapered classical evaluation: material, PST, pawn structure, mobility, rook/knight bonuses, threats, space, king safety |
+| `src/tt.hpp` | Zobrist-keyed transposition table, always-replace-by-depth |
+| `src/search.hpp/.cpp` | Negamax/PVS with the full pruning stack, quiescence with SEE, repetition detection |
+| `src/uci.hpp/.cpp` | UCI protocol loop; search runs on a background `std::thread` with an atomic stop flag, so `stop` genuinely preempts an in-progress search (the JS version's `stop` was accepted but not preemptive — this is a real improvement, not just a port) |
+| `test/perft.cpp` | Move-generation correctness harness |
+| `test/uci_smoke.js` | End-to-end UCI protocol test |
+| `gauntlet/` | `cutechess-cli`-based self-play/Stockfish-gauntlet tooling and the dependency-free Elo estimator (unchanged from the JS version — UCI is a text protocol, so this tooling doesn't care what language the engine is written in) |
 
-## Keeping this in sync with chess.html
+## Known limitations / next steps
 
-If the parent project's engine changes, regenerate `engine.js`:
-
-```
-node scripts/sync-engine.js /path/to/chess.html
-```
-
-This re-extracts the same named functions/constants and overwrites
-`engine.js`. Review the diff before committing — a renamed or restructured
-function in chess.html will make extraction fail loudly (function/const not
-found) rather than silently drift out of sync.
+- **No NNUE.** Classical hand-crafted evaluation is enough to reach 2500+
+  (see the `tuna` reference point above); NNUE would be the next lever for
+  pushing further, but requires training data and a trainer this project
+  doesn't have yet.
+- **No PEXT/BMI2 sliding attacks.** Plain magic bitboards are used instead —
+  portable to any x86-64 CPU, with a marginally larger constant factor than
+  PEXT. A valid future micro-optimization, not required to hit 2500 per the
+  `tuna` reference point.
+- **Single-threaded search.** Lazy SMP (multi-threaded search sharing a TT)
+  is a standard further Elo lever not yet implemented.
+- **No configurable UCI options.** `setoption` is accepted but ignored —
+  hash size is fixed at 64MB; no `Threads`/`UCI_Elo` limiting, etc.

@@ -1,3 +1,11 @@
 node_modules/
 gauntlet/results/
 *.log
+
+# C++ build artifacts
+build/
+*.obj
+*.exe
+*.pdb
+*.ilk
+test/*.exe
