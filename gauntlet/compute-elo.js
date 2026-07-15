@@ -4,13 +4,21 @@
 // via logistic-regression maximum likelihood — the same model Elo/ordo/
 // bayeselo all build on, just without ordo's Bayesian smoothing prior.
 //
-// Usage: node compute-elo.js <pgn-file> <subject-name> <opp1>=<elo1> [<opp2>=<elo2> ...]
+// Usage: node compute-elo.js <pgn-file> <subject-name> <opp1>=<elo1> [<opp2>=<elo2> ...] [--exclude-time-forfeits]
+//
+// --exclude-time-forfeits drops games with [Termination "time forfeit"].
+// Useful when the test machine was under load during the run (e.g. other
+// concurrent engine processes) — a flag on move 6 out of an opening book is
+// a giveaway that a game was lost to scheduling contention, not chess, and
+// including it as a normal loss would bias the estimate.
 
 const fs = require('fs');
 
-const [, , pgnPath, subject, ...anchorArgs] = process.argv;
+const rawArgs = process.argv.slice(2);
+const excludeTimeForfeits = rawArgs.includes('--exclude-time-forfeits');
+const [pgnPath, subject, ...anchorArgs] = rawArgs.filter(a => a !== '--exclude-time-forfeits');
 if (!pgnPath || !subject || anchorArgs.length === 0) {
-  console.error('Usage: node compute-elo.js <pgn> <subjectName> <opp>=<elo> [...]');
+  console.error('Usage: node compute-elo.js <pgn> <subjectName> <opp>=<elo> [...] [--exclude-time-forfeits]');
   process.exit(1);
 }
 const anchors = {};
@@ -24,6 +32,7 @@ const games = pgn.split(/\n\n(?=\[Event)/).filter(Boolean);
 
 // results[opponentName] = { games: n, score: sum of subject's points }
 const results = {};
+let excludedCount = 0;
 for (const g of games) {
   const white = /\[White "([^"]+)"\]/.exec(g);
   const black = /\[Black "([^"]+)"\]/.exec(g);
@@ -36,6 +45,11 @@ for (const g of games) {
   else continue;
   if (!(opp in anchors)) continue;
 
+  if (excludeTimeForfeits && /\[Termination "time forfeit"\]/.test(g)) {
+    excludedCount++;
+    continue;
+  }
+
   let score;
   if (r === '1-0') score = subjIsWhite ? 1 : 0;
   else if (r === '0-1') score = subjIsWhite ? 0 : 1;
@@ -46,6 +60,7 @@ for (const g of games) {
   results[opp].games += 1;
   results[opp].score += score;
 }
+if (excludeTimeForfeits) console.log(`Excluded ${excludedCount} time-forfeit game(s).\n`);
 
 console.log('Parsed results (subject:', subject + '):');
 for (const [opp, r] of Object.entries(results)) {

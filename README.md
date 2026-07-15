@@ -70,6 +70,15 @@ tool.
      SF-1500=1500 SF-1800=1800 SF-2100=2100 SF-2400=2400
    ```
 
+   Add `--exclude-time-forfeits` to drop games ended by `[Termination "time
+   forfeit"]` from the fit. If the test machine was under load during the
+   run (other concurrent engine processes, etc.), a flag on move 6 out of
+   an opening book is a giveaway that a game was lost to scheduling
+   contention rather than chess — worth checking for and excluding before
+   trusting the number. In practice the effect is usually small (one run:
+   2160±84 raw vs 2130±88 excluding 8/120 forfeited games) but it costs
+   nothing to check.
+
    This is the same underlying model Elo/ordo/bayeselo all use (logistic
    win-probability regression) — it just skips ordo's Bayesian smoothing
    prior, which mainly matters when some pairings have very few games. A few
