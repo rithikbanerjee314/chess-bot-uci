@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(chessbot CXX)
+project(atlas CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,11 +23,11 @@ set(ENGINE_SOURCES
 add_library(engine_core STATIC ${ENGINE_SOURCES})
 target_include_directories(engine_core PUBLIC src)
 
-add_executable(chessbot src/uci.cpp src/main.cpp)
-target_link_libraries(chessbot PRIVATE engine_core)
+add_executable(atlas src/uci.cpp src/main.cpp)
+target_link_libraries(atlas PRIVATE engine_core)
 if(NOT MSVC)
   find_package(Threads REQUIRED)
-  target_link_libraries(chessbot PRIVATE Threads::Threads)
+  target_link_libraries(atlas PRIVATE Threads::Threads)
 endif()
 
 add_executable(perft test/perft.cpp)
