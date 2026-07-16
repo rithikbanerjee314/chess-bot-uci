@@ -1,6 +1,6 @@
-# Atlas
+# Atlas-Hero
 
-Atlas is a standalone [UCI](https://en.wikipedia.org/wiki/Universal_Chess_Interface)
+Atlas-Hero is a standalone [UCI](https://en.wikipedia.org/wiki/Universal_Chess_Interface)
 chess engine in C++20 — bitboards, magic-bitboard sliding move generation,
 make/unmake with incremental Zobrist hashing, and a negamax search with the
 usual modern pruning stack (TT, null-move pruning, LMR, PVS, aspiration
@@ -48,7 +48,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ```
 
-Produces `build/bin/atlas` (the UCI engine) and `build/bin/perft` (the
+Produces `build/bin/atlas-hero` (the UCI engine) and `build/bin/perft` (the
 move-generation correctness harness).
 
 On Windows with MSVC, run both commands from a Developer Command Prompt (or
@@ -57,7 +57,7 @@ On Windows with MSVC, run both commands from a Developer Command Prompt (or
 ## Manual test
 
 ```
-./build/bin/atlas
+./build/bin/atlas-hero
 uci
 isready
 position startpos
@@ -105,7 +105,7 @@ tool.
 
    ```
    STOCKFISH_CMD=/path/to/stockfish CUTECHESS_CMD=/path/to/cutechess-cli \
-     ENGINE_CMD=./build/bin/atlas ./gauntlet/run-gauntlet.sh
+     ENGINE_CMD=./build/bin/atlas-hero ./gauntlet/run-gauntlet.sh
    ```
 
    Tune it via env vars: `TC` (time control), `ROUNDS` (per opponent, each
@@ -120,7 +120,7 @@ tool.
    opponents, with a 95% confidence interval:
 
    ```
-   node gauntlet/compute-elo.js gauntlet/results/<file>.pgn Atlas \
+   node gauntlet/compute-elo.js gauntlet/results/<file>.pgn Atlas-Hero \
      SF-2200=2200 SF-2500=2500 SF-2800=2800 SF-3100=3100
    ```
 

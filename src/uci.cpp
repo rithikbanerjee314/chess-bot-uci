@@ -14,7 +14,7 @@
 
 namespace {
 
-const char* ENGINE_NAME = "Atlas 1.0.0";
+const char* ENGINE_NAME = "Atlas-Hero 1.0.0";
 const char* ENGINE_AUTHOR = "Rithik Banerjee";
 constexpr int DEFAULT_MAX_DEPTH = 60; // headroom under search's MAX_PLY=128
 constexpr long long INFINITE_GO_MS = 10 * 60 * 1000;

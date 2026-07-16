@@ -9,7 +9,7 @@
 #   STOCKFISH_CMD=/path/to/stockfish CUTECHESS_CMD=/path/to/cutechess-cli ./run-gauntlet.sh
 #
 # Tunable via env vars (defaults shown):
-#   ENGINE_CMD=../build/bin/atlas   # path to the compiled UCI binary
+#   ENGINE_CMD=../build/bin/atlas-hero   # path to the compiled UCI binary
 #   TC=30+0.3         # time control per cutechess-cli syntax
 #   ROUNDS=15          # rounds per opponent (each round = 2 games, colors swapped)
 #   CONCURRENCY=4      # games running in parallel
@@ -23,7 +23,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 STOCKFISH_CMD="${STOCKFISH_CMD:-stockfish}"
 CUTECHESS_CMD="${CUTECHESS_CMD:-cutechess-cli}"
-ENGINE_CMD="${ENGINE_CMD:-$REPO_DIR/build/bin/atlas}"
+ENGINE_CMD="${ENGINE_CMD:-$REPO_DIR/build/bin/atlas-hero}"
 TC="${TC:-30+0.3}"
 ROUNDS="${ROUNDS:-15}"
 CONCURRENCY="${CONCURRENCY:-4}"
@@ -34,12 +34,12 @@ mkdir -p "$OUT_DIR"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 PGN_OUT="$OUT_DIR/gauntlet-$STAMP.pgn"
 
-ENGINE_ARGS=(-engine cmd="$ENGINE_CMD" name=Atlas)
+ENGINE_ARGS=(-engine cmd="$ENGINE_CMD" name=Atlas-Hero)
 for elo in $ELOS; do
   ENGINE_ARGS+=(-engine cmd="$STOCKFISH_CMD" option.UCI_LimitStrength=true "option.UCI_Elo=$elo" option.Threads=1 "name=SF-$elo")
 done
 
-echo "Gauntlet: Atlas vs Stockfish @ [$ELOS], tc=$TC, $ROUNDS rounds/opponent, concurrency=$CONCURRENCY"
+echo "Gauntlet: Atlas-Hero vs Stockfish @ [$ELOS], tc=$TC, $ROUNDS rounds/opponent, concurrency=$CONCURRENCY"
 echo "PGN output: $PGN_OUT"
 
 "$CUTECHESS_CMD" \

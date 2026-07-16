@@ -1,8 +1,8 @@
 {
-  "name": "atlas",
+  "name": "atlas-hero",
   "version": "1.0.0",
   "private": true,
-  "description": "Atlas — standalone C++20 UCI chess engine (bitboards, magic move generation, negamax+pruning search) with a cutechess-cli-based gauntlet/rating testing harness",
+  "description": "Atlas-Hero — standalone C++20 UCI chess engine (bitboards, magic move generation, negamax+pruning search) with a cutechess-cli-based gauntlet/rating testing harness",
   "scripts": {
     "test": "node test/uci_smoke.js"
   },
