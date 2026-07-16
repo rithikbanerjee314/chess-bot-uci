@@ -12,7 +12,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const assert = require('assert');
 
-const exePath = process.argv[2] || path.join(__dirname, '..', 'build', 'bin', 'atlas-hero.exe');
+const exePath = process.argv[2] || path.join(__dirname, '..', 'build', 'bin', 'crucible.exe');
 
 function fail(msg) {
   console.error('FAIL:', msg);

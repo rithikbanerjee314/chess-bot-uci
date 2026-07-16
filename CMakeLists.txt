@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(atlas-hero CXX)
+project(crucible CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,11 +23,11 @@ set(ENGINE_SOURCES
 add_library(engine_core STATIC ${ENGINE_SOURCES})
 target_include_directories(engine_core PUBLIC src)
 
-add_executable(atlas-hero src/uci.cpp src/main.cpp)
-target_link_libraries(atlas-hero PRIVATE engine_core)
+add_executable(crucible src/uci.cpp src/main.cpp)
+target_link_libraries(crucible PRIVATE engine_core)
 if(NOT MSVC)
   find_package(Threads REQUIRED)
-  target_link_libraries(atlas-hero PRIVATE Threads::Threads)
+  target_link_libraries(crucible PRIVATE Threads::Threads)
 endif()
 
 add_executable(perft test/perft.cpp)
